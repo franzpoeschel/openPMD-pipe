@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
+from mpi4py import MPI
 import openpmd_api as io
 import argparse
+import sys  # sys.stderr.write
 
 
 def parse_args():
@@ -21,38 +23,69 @@ def parse_args():
     return parser.parse_args()
 
 
+class Chunk:
+    def __init__(self, offset, extent):
+        assert (len(offset) == len(extent))
+        self.offset = offset
+        self.extent = extent
+
+    def __len__(self):
+        return len(self.offset)
+
+    def slice1D(self, mpi_rank, mpi_size, dimension=None):
+        if dimension is None:
+            # pick that dimension which has the highest count of items
+            dimension = 0
+            maximum = self.extent[0]
+            for k, v in enumerate(self.extent):
+                if v > maximum:
+                    dimension = k
+        assert (dimension < len(self))
+        # no offset
+        assert (self.offset == [0 for _ in range(len(self))])
+        offset = [0 for _ in range(len(self))]
+        stride = self.extent[dimension] // mpi_size
+        rest = self.extent[dimension] % mpi_size
+
+        # local function f computes the offset of a rank
+        # for more equal balancing, we want the start index
+        # at the upper gaussian bracket of (N/n*rank)
+        # where N the size of the dataset in dimension dim
+        # and n the MPI size
+        # for avoiding integer overflow, this is the same as:
+        # (N div n)*rank + round((N%n)/n*rank)
+        def f(rank):
+            res = stride * rank
+            padDivident = rest * rank
+            pad = padDivident // mpi_size
+            if pad * mpi_size < padDivident:
+                pad += 1
+            return res + pad
+
+        offset[dimension] = f(mpi_rank)
+        extent = self.extent.copy()
+        if mpi_rank >= mpi_size - 1:
+            extent[dimension] -= offset[dimension]
+        else:
+            extent[dimension] = f(mpi_rank + 1) - offset[dimension]
+        return Chunk(offset, extent)
+
+
 class pipe:
-    def __init__(self, infile, outfile, inconfig, outconfig):
+    def __init__(self, infile, outfile, inconfig, outconfig, comm):
         self.infile = infile
         self.outfile = outfile
         self.inconfig = inconfig
         self.outconfig = outconfig
         self.chunks = []
+        self.comm = comm
 
     def run(self):
-        inseries = io.Series(self.infile, io.Access_Type.read_only,
+        inseries = io.Series(self.infile, io.Access_Type.read_only, self.comm,
                              self.inconfig)
-        outseries = io.Series(self.outfile, io.Access_Type.create,
+        outseries = io.Series(self.outfile, io.Access_Type.create, self.comm,
                               self.outconfig)
-        write_iterations = outseries.write_iterations()
-        for in_iteration in inseries.read_iterations():
-            print("Iteration {0} contains {1} meshes:".format(
-                in_iteration.iteration_index, len(in_iteration.meshes)))
-            for m in in_iteration.meshes:
-                print("\t {0}".format(m))
-            print("")
-            print("Iteration {0} contains {1} particle species:".format(
-                in_iteration.iteration_index, len(in_iteration.particles)))
-            for ps in in_iteration.particles:
-                print("\t {0}".format(ps))
-                print("With records:")
-                for r in in_iteration.particles[ps]:
-                    print("\t {0}".format(r))
-            out_iteration = write_iterations[in_iteration.iteration_index]
-            self.__copy(in_iteration, out_iteration)
-            in_iteration.close()
-            out_iteration.close()
-            self.chunks.clear()
+        self.__copy(inseries, outseries)
 
     def __copy(self, src, dest):
         if (type(src) != type(dest)
@@ -60,11 +93,78 @@ class pipe:
                 and not isinstance(dest, io.Iteration)):
             raise RuntimeError(
                 "Internal error: Trying to copy mismatching types")
+        for key in src.attributes:
+            if key == "openPMDextension":
+                # this sets the wrong datatype otherwise
+                dest.set_openPMD_extension(src.openPMD_extension)
+            else:
+                attr = src.get_attribute(key)
+                if key == "unitDimension":
+                    if hasattr(dest, 'unit_dimension'):
+                        dest.unit_dimension = {
+                            io.Unit_Dimension.L: attr[0],
+                            io.Unit_Dimension.M: attr[1],
+                            io.Unit_Dimension.T: attr[2],
+                            io.Unit_Dimension.I: attr[3],
+                            io.Unit_Dimension.theta: attr[4],
+                            io.Unit_Dimension.N: attr[5],
+                            io.Unit_Dimension.J: attr[6]
+                        }
+                    elif hasattr(dest, 'set_unit_dimension'):
+                        sys.stderr.write("[Warning] Using deprecated method " +
+                                        ".set_unit_dimension() on " +
+                                        str(type(dest)) + '\n')
+                        dest.set_unit_dimension({
+                            io.Unit_Dimension.L: attr[0],
+                            io.Unit_Dimension.M: attr[1],
+                            io.Unit_Dimension.T: attr[2],
+                            io.Unit_Dimension.I: attr[3],
+                            io.Unit_Dimension.theta: attr[4],
+                            io.Unit_Dimension.N: attr[5],
+                            io.Unit_Dimension.J: attr[6]
+                        })
+                    else:
+                        sys.stderr.write(
+                            "[Warning] Cannot write unitDimension for " +
+                            str(type(dest)) + '\n')
+                else:
+                    dest.set_attribute(key, attr)
+        sys.stderr.flush()
         container_types = [
             io.Mesh_Container, io.Particle_Container, io.ParticleSpecies,
             io.Record, io.Mesh
         ]
-        if isinstance(src, io.Iteration):
+        if isinstance(src, io.Series):
+            write_iterations = dest.write_iterations()
+            for in_iteration in src.read_iterations():
+                print("Iteration {0} contains {1} meshes:".format(
+                    in_iteration.iteration_index, len(in_iteration.meshes)))
+                for m in in_iteration.meshes:
+                    print("\t {0}".format(m))
+                print("")
+                print("Iteration {0} contains {1} particle species:".format(
+                    in_iteration.iteration_index, len(in_iteration.particles)))
+                for ps in in_iteration.particles:
+                    print("\t {0}".format(ps))
+                    print("With records:")
+                    for r in in_iteration.particles[ps]:
+                        print("\t {0}".format(r))
+                out_iteration = write_iterations[in_iteration.iteration_index]
+                self.__copy(in_iteration, out_iteration)
+                in_iteration.close()
+                out_iteration.close()
+                self.chunks.clear()
+        elif isinstance(src, io.Record_Component):
+            shape = src.shape
+            offset = [0 for _ in shape]
+            chunk = Chunk(offset, shape)
+            local_chunk = chunk.slice1D(self.comm.rank, self.comm.size)
+            dtype = src.dtype
+            dest.reset_dataset(io.Dataset(dtype, shape))
+            chunk = src.load_chunk(local_chunk.offset, local_chunk.extent)
+            self.chunks.append(chunk)
+            dest.store_chunk(chunk, local_chunk.offset, local_chunk.extent)
+        elif isinstance(src, io.Iteration):
             self.__copy(src.meshes, dest.meshes)
             self.__copy(src.particles, dest.particles)
         elif any([
@@ -73,16 +173,10 @@ class pipe:
         ]):
             for key in src:
                 self.__copy(src[key], dest[key])
-        elif isinstance(src, io.Record_Component):
-            shape = src.shape
-            dtype = src.dtype
-            dest.reset_dataset(io.Dataset(dtype, shape))
-            chunk = src.load_chunk([0 for _ in shape], shape)
-            self.chunks.append(chunk)
-            dest[()] = chunk
 
 
 if __name__ == "__main__":
     args = parse_args()
-    pipe = pipe(args.infile, args.outfile, args.inconfig, args.outconfig)
+    pipe = pipe(args.infile, args.outfile, args.inconfig, args.outconfig,
+                MPI.COMM_WORLD)
     pipe.run()
