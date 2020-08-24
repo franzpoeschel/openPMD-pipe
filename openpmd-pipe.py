@@ -35,7 +35,6 @@ class pipe:
         outseries = io.Series(self.outfile, io.Access_Type.create,
                               self.outconfig)
         write_iterations = outseries.write_iterations()
-        print("rabimmel", type(inseries), isinstance(inseries, io.Series))
         for in_iteration in inseries.read_iterations():
             print("Iteration {0} contains {1} meshes:".format(
                 in_iteration.iteration_index, len(in_iteration.meshes)))
