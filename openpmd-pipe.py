@@ -24,6 +24,10 @@ def parse_args():
 
 
 class Chunk:
+    """
+    A Chunk is an n-dimensional hypercube, defined by an offset and an extent.
+    Offset and extent must be of the same dimensionality (Chunk.__len__).
+    """
     def __init__(self, offset, extent):
         assert (len(offset) == len(extent))
         self.offset = offset
@@ -33,6 +37,13 @@ class Chunk:
         return len(self.offset)
 
     def slice1D(self, mpi_rank, mpi_size, dimension=None):
+        """
+        Slice this chunk into mpi_size hypercubes along one of its n dimensions.
+        The dimension is given through the 'dimension' parameter. If None, the
+        dimension with the largest extent on this hypercube is automatically
+        picked.
+        Returns the mpi_rank'th of the sliced chunks.
+        """
         if dimension is None:
             # pick that dimension which has the highest count of items
             dimension = 0
@@ -72,6 +83,9 @@ class Chunk:
 
 
 class pipe:
+    """
+    Represents the configuration of one "pipe" pass.
+    """
     def __init__(self, infile, outfile, inconfig, outconfig, comm):
         self.infile = infile
         self.outfile = outfile
@@ -88,6 +102,11 @@ class pipe:
         self.__copy(inseries, outseries)
 
     def __copy(self, src, dest):
+        """
+        Worker method.
+        Copies data from src to dest. May represent any point in the openPMD
+        hierarchy, but src and dest must both represent the same layer.
+        """
         if (type(src) != type(dest)
                 and not isinstance(src, io.IndexedIteration)
                 and not isinstance(dest, io.Iteration)):
@@ -110,31 +129,14 @@ class pipe:
                             io.Unit_Dimension.N: attr[5],
                             io.Unit_Dimension.J: attr[6]
                         }
-                    elif hasattr(dest, 'set_unit_dimension'):
-                        sys.stderr.write("[Warning] Using deprecated method " +
-                                        ".set_unit_dimension() on " +
-                                        str(type(dest)) + '\n')
-                        dest.set_unit_dimension({
-                            io.Unit_Dimension.L: attr[0],
-                            io.Unit_Dimension.M: attr[1],
-                            io.Unit_Dimension.T: attr[2],
-                            io.Unit_Dimension.I: attr[3],
-                            io.Unit_Dimension.theta: attr[4],
-                            io.Unit_Dimension.N: attr[5],
-                            io.Unit_Dimension.J: attr[6]
-                        })
-                    else:
-                        sys.stderr.write(
-                            "[Warning] Cannot write unitDimension for " +
-                            str(type(dest)) + '\n')
                 else:
                     dest.set_attribute(key, attr)
-        sys.stderr.flush()
         container_types = [
             io.Mesh_Container, io.Particle_Container, io.ParticleSpecies,
             io.Record, io.Mesh
         ]
         if isinstance(src, io.Series):
+            # main loop: read iterations of src, write to dest
             write_iterations = dest.write_iterations()
             for in_iteration in src.read_iterations():
                 print("Iteration {0} contains {1} meshes:".format(
