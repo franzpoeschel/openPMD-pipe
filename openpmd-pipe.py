@@ -5,6 +5,7 @@ import openpmd_api as io
 import argparse
 import sys  # sys.stderr.write
 
+debug = False
 
 def parse_args():
     parser = argparse.ArgumentParser(description='openPMD Pipe')
@@ -101,7 +102,7 @@ class pipe:
                               self.outconfig)
         self.__copy(inseries, outseries)
 
-    def __copy(self, src, dest):
+    def __copy(self, src, dest, current_path="/data/"):
         """
         Worker method.
         Copies data from src to dest. May represent any point in the openPMD
@@ -152,7 +153,10 @@ class pipe:
                     for r in in_iteration.particles[ps]:
                         print("\t {0}".format(r))
                 out_iteration = write_iterations[in_iteration.iteration_index]
-                self.__copy(in_iteration, out_iteration)
+                self.__copy(
+                    in_iteration,
+                    out_iteration,
+                    current_path + str(in_iteration.iteration_index) + "/")
                 in_iteration.close()
                 out_iteration.close()
                 self.chunks.clear()
@@ -161,20 +165,31 @@ class pipe:
             offset = [0 for _ in shape]
             chunk = Chunk(offset, shape)
             local_chunk = chunk.slice1D(self.comm.rank, self.comm.size)
+            if debug:
+                end = local_chunk.offset.copy()
+                for i in range(len(end)):
+                    end[i] += local_chunk.extent[i]
+                print(
+                    "{}\t{}/{}:\t{} -- {}".format(
+                        current_path,
+                        self.comm.rank,
+                        self.comm.size,
+                        local_chunk.offset,
+                        end))
             dtype = src.dtype
             dest.reset_dataset(io.Dataset(dtype, shape))
             chunk = src.load_chunk(local_chunk.offset, local_chunk.extent)
             self.chunks.append(chunk)
             dest.store_chunk(chunk, local_chunk.offset, local_chunk.extent)
         elif isinstance(src, io.Iteration):
-            self.__copy(src.meshes, dest.meshes)
-            self.__copy(src.particles, dest.particles)
+            self.__copy(src.meshes, dest.meshes, current_path + "meshes/")
+            self.__copy(src.particles, dest.particles, current_path + "particles/")
         elif any([
                 isinstance(src, container_type)
                 for container_type in container_types
         ]):
             for key in src:
-                self.__copy(src[key], dest[key])
+                self.__copy(src[key], dest[key], current_path + key + "/")
 
 
 if __name__ == "__main__":
