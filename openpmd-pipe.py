@@ -183,21 +183,25 @@ class pipe:
         elif isinstance(src, io.Record_Component):
             shape = src.shape
             offset = [0 for _ in shape]
-            chunk = Chunk(offset, shape)
-            local_chunk = chunk.slice1D(self.comm.rank, self.comm.size)
-            if debug:
-                end = local_chunk.offset.copy()
-                for i in range(len(end)):
-                    end[i] += local_chunk.extent[i]
-                print("{}\t{}/{}:\t{} -- {}".format(current_path,
-                                                    self.comm.rank,
-                                                    self.comm.size,
-                                                    local_chunk.offset, end))
             dtype = src.dtype
             dest.reset_dataset(io.Dataset(dtype, shape))
-            chunk = src.load_chunk(local_chunk.offset, local_chunk.extent)
-            self.chunks.append(chunk)
-            dest.store_chunk(chunk, local_chunk.offset, local_chunk.extent)
+            if src.empty:
+                dest.make_constant(0) # todo
+            elif src.constant:
+                dest.make_constant(0) # todo
+            else:
+                chunk = Chunk(offset, shape)
+                local_chunk = chunk.slice1D(self.comm.rank, self.comm.size)
+                if debug:
+                    end = local_chunk.offset.copy()
+                    for i in range(len(end)):
+                        end[i] += local_chunk.extent[i]
+                    print("{}\t{}/{}:\t{} -- {}".format(
+                        current_path, self.comm.rank, self.comm.size,
+                        local_chunk.offset, end))
+                chunk = src.load_chunk(local_chunk.offset, local_chunk.extent)
+                self.chunks.append(chunk)
+                dest.store_chunk(chunk, local_chunk.offset, local_chunk.extent)
         elif isinstance(src, io.Iteration):
             self.__copy(src.meshes, dest.meshes, current_path + "meshes/")
             self.__copy(src.particles, dest.particles,
