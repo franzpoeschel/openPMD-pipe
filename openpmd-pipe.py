@@ -153,6 +153,7 @@ class pipe:
                     for r in in_iteration.particles[ps]:
                         print("\t {0}".format(r))
                 out_iteration = write_iterations[in_iteration.iteration_index]
+                sys.stdout.flush()
                 self.__copy(
                     in_iteration,
                     out_iteration,
@@ -160,6 +161,7 @@ class pipe:
                 in_iteration.close()
                 out_iteration.close()
                 self.chunks.clear()
+                sys.stdout.flush()
         elif isinstance(src, io.Record_Component):
             shape = src.shape
             offset = [0 for _ in shape]
