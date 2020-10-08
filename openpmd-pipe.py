@@ -7,6 +7,7 @@ import sys  # sys.stderr.write
 
 debug = False
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='openPMD Pipe')
 
@@ -155,8 +156,7 @@ class pipe:
                 out_iteration = write_iterations[in_iteration.iteration_index]
                 sys.stdout.flush()
                 self.__copy(
-                    in_iteration,
-                    out_iteration,
+                    in_iteration, out_iteration,
                     current_path + str(in_iteration.iteration_index) + "/")
                 in_iteration.close()
                 out_iteration.close()
@@ -171,13 +171,10 @@ class pipe:
                 end = local_chunk.offset.copy()
                 for i in range(len(end)):
                     end[i] += local_chunk.extent[i]
-                print(
-                    "{}\t{}/{}:\t{} -- {}".format(
-                        current_path,
-                        self.comm.rank,
-                        self.comm.size,
-                        local_chunk.offset,
-                        end))
+                print("{}\t{}/{}:\t{} -- {}".format(current_path,
+                                                    self.comm.rank,
+                                                    self.comm.size,
+                                                    local_chunk.offset, end))
             dtype = src.dtype
             dest.reset_dataset(io.Dataset(dtype, shape))
             chunk = src.load_chunk(local_chunk.offset, local_chunk.extent)
@@ -185,7 +182,8 @@ class pipe:
             dest.store_chunk(chunk, local_chunk.offset, local_chunk.extent)
         elif isinstance(src, io.Iteration):
             self.__copy(src.meshes, dest.meshes, current_path + "meshes/")
-            self.__copy(src.particles, dest.particles, current_path + "particles/")
+            self.__copy(src.particles, dest.particles,
+                        current_path + "particles/")
         elif any([
                 isinstance(src, container_type)
                 for container_type in container_types
