@@ -97,10 +97,16 @@ class pipe:
         self.comm = comm
 
     def run(self):
+        print("Opening data source")
+        sys.stdout.flush()
         inseries = io.Series(self.infile, io.Access_Type.read_only, self.comm,
                              self.inconfig)
+        print("Opening data sink")
+        sys.stdout.flush()
         outseries = io.Series(self.outfile, io.Access_Type.create, self.comm,
                               self.outconfig)
+        print("Opened input and output")
+        sys.stdout.flush()
         self.__copy(inseries, outseries)
 
     def __copy(self, src, dest, current_path="/data/"):
