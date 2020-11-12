@@ -186,9 +186,10 @@ class pipe:
             dtype = src.dtype
             dest.reset_dataset(io.Dataset(dtype, shape))
             if src.empty:
-                dest.make_constant(0) # todo
+                pass # empty record component automatically created by
+                     # dest.reset_dataset()
             elif src.constant:
-                dest.make_constant(0) # todo
+                dest.make_constant(src.get_attribute("value"))
             else:
                 chunk = Chunk(offset, shape)
                 local_chunk = chunk.slice1D(self.comm.rank, self.comm.size)
